@@ -1,21 +1,22 @@
 
-
 /**
  * Prototype software for Automated Multi-Dog Feeder
  * 
  */
- //Library Inclusions
- #include <Servo.h>
+ // Library Inclusions ===========================================================================================================
+ #include <Servo.h> // Arduino Servo motor library
  #include "Wire.h" // For I2C
  #include "LCD.h" // For LCD
- #include "LiquidCrystal_I2C.h" // Added library*
+ #include "LiquidCrystal_I2C.h" // for I2C LCD backpack
  #include <SPI.h> // for SD card
  #include <SD.h> // for SD card
  #include <HX711.h> // for load cell ADC
+ #include <ThreeWire.h> // software SPI for RTC
+ #include <RtcDS1302.h> // for RTC
+ #include <TMRpcm.h> // .wav library
+ // end library Inclusions =======================================================================================================
  
-
-
- //pins
+ // I/O pin Designations =========================================================================================================
  #define SLScontrol 9 //control pin for SLS servo motor
  #define menu 3 // menu button with interrupt
  #define up 4 // up button
@@ -27,35 +28,54 @@
  #define SCALE_LEFT_SCK 25 //
  #define SCALE_RIGHT_DOUT 22 //
  #define SCALE_RIGHT_SCK 24 //
+
+ #define RTC_CLK 47
+ #define RTC_DAT 48
+ #define RTC_RST 49
+
+ #define SOUND 46
+
+ #define MOTOR_LEFT_OPEN 10
+ #define MOTOR_LEFT_CLOSE 11
+ #define MOTOR_RIGHT_OPEN 12
+ #define MOTOR_RIGHT_CLOSE 13
+ #define speed 255
+
+ // end I/O pins =================================================================================================================
  
 
- //values
- #define SLS_idle_position 90 // Idle position for SLS storage(degrees)
+ // Constants ====================================================================================================================
+ #define SLS_idle_position 80 // Idle position for SLS storage(degrees)
  #define SLS_left_fill 0 // fill position to left hopper(degrees)
- #define SLS_left_dump 68 // dump positon to left bowl(degrees)
- #define SLS_right_fill 180 // fill position to right hopper(degrees)
- #define SLS_right_dump 135 // dump positon to right bowl(degrees)
+ #define SLS_left_dump 45 // dump positon to left bowl(degrees)
+ #define SLS_right_fill 160 // fill position to right hopper(degrees)
+ #define SLS_right_dump 110 // dump positon to right bowl(degrees)
  #define SLS_fill_delay 2000 // delay for SLS to fill from hopper(mS)
  #define SLS_dump_delay 2000 // delay for SLS to dump into bowl(mS)
+ #define buttondelay 500 // delay for button debounce(mS)
+// end constants============================================================================================================================
 
  const int chipSelect = 53;
  volatile boolean userInterface = false;
+ volatile boolean allowSimultaneousFeeding;
+ volatile boolean recentBowlMove = false;
 
  // set up variables using the SD utility library functions:
-Sd2Card card;
-SdVolume volume;
-SdFile root;
+ Sd2Card card;
+ SdVolume volume;
+ SdFile root;
  
 
- Servo SLS;
- HX711 leftScale;
- HX711 rightScale;
+ Servo SLS; // instantiate SLS servo motor
+ HX711 leftScale; // Left Load Cell ADC
+ HX711 rightScale; // Right Load Cell ADC
+ LiquidCrystal_I2C lcd(0x27,2,1,0,4,5,6,7); //ADDR,EN,R/W,RS,D4,D5,D6,D7 0x27 is the default I2C address for LCD
+ ThreeWire RTC_Serial(RTC_DAT, RTC_CLK, RTC_RST);
+ RtcDS1302<ThreeWire> Clock(RTC_Serial);
+ TMRpcm speak; // audio output object
+ 
 
- //Set the pins on the I2C chip used for LCD connections
- //ADDR,EN,R/W,RS,D4,D5,D6,D7
- LiquidCrystal_I2C lcd(0x27,2,1,0,4,5,6,7); // 0x27 is the default I2C address for LCD
-
-// Right arrow
+ // Right arrow for menu
 byte ARROW[8] = {
   B00000,
   B00100,
@@ -68,7 +88,53 @@ byte ARROW[8] = {
 };
 
 
- //functions
+ //functions ######################################################################################################################
+ int open_left(){
+  if(!recentBowlMove){
+    analogWrite(MOTOR_LEFT_OPEN, speed);
+    delay(2000);
+    analogWrite(MOTOR_LEFT_OPEN, 0);
+    
+  }
+  bowlMoved();
+  return 1;
+ }
+ int open_right(){
+  if(!recentBowlMove){
+    analogWrite(MOTOR_RIGHT_OPEN, speed);
+    delay(2000);
+    analogWrite(MOTOR_RIGHT_OPEN, 0);
+    
+  }
+  bowlMoved();
+  return 1;
+ }
+ int close_left(){
+  if(!recentBowlMove){
+    analogWrite(MOTOR_LEFT_CLOSE, speed);
+    delay(2000);
+    analogWrite(MOTOR_LEFT_CLOSE, 0);
+    
+  }
+  bowlMoved();
+  return 1;
+ }
+ int close_right(){
+  if(!recentBowlMove){
+    analogWrite(MOTOR_RIGHT_CLOSE, speed);
+    delay(1000);
+    analogWrite(MOTOR_RIGHT_CLOSE, 0);
+    
+  }
+  bowlMoved();
+  return 1;
+ }
+ 
+ void bowlMoved(){
+  //recentBowlMove = true;
+  
+ }
+ 
  void SLS_Idle(){
   //Actuates SLS to idle position
   SLS.write(SLS_idle_position);
@@ -108,62 +174,149 @@ byte ARROW[8] = {
  }
 
  void UI(){
-  while(digitalRead(back) != LOW){
+  String Set_Clock = "Set Clock";
+  String Left_Dog = "Left Dog";
+  String Right_Dog = "Right Dog";
+  String Option = "Option";
+  
+   main_clock:
    lcd.clear();
    lcd.write(9);
-   lcd.print("Set Clock");
+   lcd.print(Set_Clock);
    lcd.setCursor(1,1);
-   lcd.print("Left Dog");
+   lcd.print(Left_Dog);
    lcd.setCursor(1,2);
-   lcd.print("Right Dog");
+   lcd.print(Right_Dog);
    lcd.setCursor(1,3);
-   lcd.print("Option");
-   delay(1000);
+   lcd.print(Option);
+   delay(buttondelay);
+   while(true){
+    if(!digitalRead(up))goto main_option;
+    if(!digitalRead(down)) goto main_left;
+    if(!digitalRead(back)) goto UI_exit;
+    if(!digitalRead(enter)) goto Clock_Set;
+   }
 
-   
+   main_left:
    lcd.clear();
    lcd.setCursor(1,0);
-   lcd.print("Set Clock");
+   lcd.print(Set_Clock);
    lcd.setCursor(0,1);
    lcd.write(9);
-   lcd.print("Left Dog");
+   lcd.print(Left_Dog);
    lcd.setCursor(1,2);
-   lcd.print("Right Dog");
+   lcd.print(Right_Dog);
    lcd.setCursor(1,3);
-   lcd.print("Option");
-   delay(1000);
+   lcd.print(Option);
+   delay(buttondelay);
+   while(true){
+    if(!digitalRead(up))goto main_clock;
+    if(!digitalRead(down)) goto main_right;
+    if(!digitalRead(back)) goto UI_exit;
+    //if(!digitalRead(enter)) goto
+   }
 
+   main_right:
    lcd.clear();
    lcd.setCursor(1,0);
-   lcd.print("Set Clock");
+   lcd.print(Set_Clock);
    lcd.setCursor(1,1);
-   lcd.print("Left Dog");
+   lcd.print(Left_Dog);
    lcd.setCursor(0,2);
    lcd.write(9);
-   lcd.print("Right Dog");
+   lcd.print(Right_Dog);
    lcd.setCursor(1,3);
-   lcd.print("Option");
-   delay(1000);
+   lcd.print(Option);
+   delay(buttondelay);
+   while(true){
+    if(!digitalRead(up))goto main_left;
+    if(!digitalRead(down)) goto main_option;
+    if(!digitalRead(back)) goto UI_exit;
+    //if(!digitalRead(enter)) goto
+   }
 
+   main_option:
    lcd.clear();
    lcd.setCursor(1,0);
-   lcd.print("Set Clock");
+   lcd.print(Set_Clock);
    lcd.setCursor(1,1);
-   lcd.print("Left Dog");
+   lcd.print(Left_Dog);
    lcd.setCursor(1,2);
-   lcd.print("Right Dog");
+   lcd.print(Right_Dog);
    lcd.setCursor(0,3);
    lcd.write(9);
-   lcd.print("Option");
-   delay(1000);
- }
+   lcd.print(Option);
+   delay(buttondelay);
+   while(true){
+    if(!digitalRead(up))goto main_right;
+    if(!digitalRead(down)) goto main_clock;
+    if(!digitalRead(back)) goto UI_exit;
+    if(!digitalRead(enter)) goto OptionA;
+   }
+
+   
+
+  
+  Clock_Set:
+  lcd.clear();
+  lcd.print("the clock setting interface goes here");
+  delay(buttondelay);
+  while(true){
+    //if(!digitalRead(up))goto main_right;
+    //if(!digitalRead(down)) goto main_clock;
+    if(!digitalRead(back)) goto main_clock;
+    //if(!digitalRead(enter)) goto
+   }
+
+  OptionA:
+  lcd.clear();
+  lcd.print("Feed simultaneously?");
+  lcd.setCursor(0,1);
+  lcd.write(9);
+  lcd.print("Yes");
+  lcd.setCursor(1,2);
+  lcd.print("No");
+  delay(buttondelay);
+  while(true){
+    if(!digitalRead(up))goto OptionB;
+    if(!digitalRead(down)) goto OptionB;
+    if(!digitalRead(back)) goto main_option;
+    if(!digitalRead(enter)){SetOption(true); goto main_option;}
+   }
+   OptionB:
+  lcd.clear();
+  lcd.print("Feed simultaneously?");
+  lcd.setCursor(1,1);
+  lcd.print("Yes");
+  lcd.setCursor(0,2);
+  lcd.write(9);
+  lcd.print("No");
+  delay(buttondelay);
+  while(true){
+    if(!digitalRead(up))goto OptionA;
+    if(!digitalRead(down)) goto OptionA;
+    if(!digitalRead(back)) goto main_option;
+    if(!digitalRead(enter)){SetOption(false); goto main_option;}
+   }
+  
+  UI_exit:
   userInterface = false;
   lcd.clear();
   return;
+ } // End User Interface**************************
+
+ void SetOption(bool toSet){
+  if(toSet=true){allowSimultaneousFeeding = true; digitalWrite(13, LOW);}
+  
+  else if(toSet=false){allowSimultaneousFeeding = false; digitalWrite(13, LOW);}
+  Serial.println(allowSimultaneousFeeding);
+  return;
  }
+
 
 void setup() {
   Serial.begin(9600);
+  pinMode(13, OUTPUT);
 
   pinMode(menu, INPUT_PULLUP);
   attachInterrupt(1, ISR_UI, LOW);
@@ -174,6 +327,14 @@ void setup() {
 
   pinMode(36, OUTPUT);
   pinMode(38, OUTPUT);
+  pinMode(MOTOR_LEFT_OPEN, OUTPUT);
+  pinMode(MOTOR_RIGHT_CLOSE, OUTPUT);
+  pinMode(MOTOR_LEFT_CLOSE, OUTPUT);
+  pinMode(MOTOR_RIGHT_OPEN, OUTPUT);
+  digitalWrite(MOTOR_LEFT_OPEN, LOW);
+  digitalWrite(MOTOR_RIGHT_CLOSE, LOW);
+  digitalWrite(MOTOR_LEFT_CLOSE, LOW);
+  digitalWrite(MOTOR_RIGHT_OPEN, LOW);
 
   leftScale.begin(SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
   leftScale.set_scale();
@@ -192,10 +353,13 @@ void setup() {
   lcd.begin (20,4); // 20 x 4 LCD module
   lcd.setBacklightPin(3,POSITIVE); // BL, BL_POL
   lcd.setBacklight(HIGH);
-
   lcd.createChar(9, ARROW);
   lcd.clear();
-  
+
+  Clock.Begin();
+
+  speak.speakerPin = SOUND;
+  speak.setVolume(7);
 
  // Test code below here in setup ***************************************************************************************************
   // Set off LCD module
@@ -281,18 +445,18 @@ void setup() {
     while (1);
   }
 
-  Serial.print("Clusters:          ");
+  Serial.print(F("Clusters:          "));
   Serial.println(volume.clusterCount());
-  Serial.print("Blocks x Cluster:  ");
+  Serial.print(F("Blocks x Cluster:  "));
   Serial.println(volume.blocksPerCluster());
 
-  Serial.print("Total Blocks:      ");
+  Serial.print(F("Total Blocks:      "));
   Serial.println(volume.blocksPerCluster() * volume.clusterCount());
   Serial.println();
 
   // print the type and size of the first FAT-type volume
   uint32_t volumesize;
-  Serial.print("Volume type is:    FAT");
+  Serial.print(F("Volume type is:    FAT"));
   Serial.println(volume.fatType(), DEC);
 
   volumesize = volume.blocksPerCluster();    // clusters are collections of blocks
@@ -312,7 +476,8 @@ void setup() {
   // list all files in the card with date and size
   root.ls(LS_R | LS_DATE | LS_SIZE);
 
-
+  RtcDateTime CurrentTime = RtcDateTime(__DATE__,__TIME__);
+  Clock.SetDateTime(CurrentTime);
 
 
 } // End of Setup******************************************************************************************************************
@@ -322,17 +487,44 @@ void loop() {
     UI();
   }
 
-  Serial.println(rightScale.get_units());
-  Serial.println(leftScale.get_units());
-  delay(10);
+
+
+  RtcDateTime now = Clock.GetDateTime();
+  String timestamp = date2string(now);
+  Serial.println(timestamp);
+  lcd.clear();
+  lcd.print(timestamp);
+  printDateTime(now);
+  //speak.play("a.wav");
+//  open_left();
+//  delay(5000);
+//  close_left();
+//  delay(5000);
+//    open_right();
+//  delay(5000);
+//  close_right();
+//  delay(5000);
+//  UpdateClock();
+//  Checkfordog();
+//  Checkforfeeding();
+  
 
 
 
+
+//  Serial.println(rightScale.get_units());
+//  Serial.println(leftScale.get_units());
+//  delay(10);
+//
+//
+  //SLS test operations
   SLS.write(-50);
   delay(5000);
   SLS.write(360);
   delay(5000);
   SLS_Left(10);
+  delay(5000);
+  SLS_Right(10);
   delay(5000);
   
 
@@ -342,4 +534,36 @@ void loop() {
    
 
 
+}
+
+// more functions
+
+
+String date2string(const RtcDateTime& dateTime){
+  char datestring[25];
+
+  snprintf_P(datestring, (sizeof(datestring) / sizeof(datestring[0])),
+  PSTR("%02u/%02u/%04u %02u:%02u"),
+      //("%02u/%02u/%04u %02u:%02u:%02u")
+      dateTime.Month(),
+      dateTime.Day(),
+      dateTime.Year(),
+      dateTime.Hour(),
+      dateTime.Minute()//,
+      //dateTime.Second()
+      );
+  return datestring; // I do not know if returning a Char[] instead of a string works, maybe i should null terminate it?
+}
+
+#define countof(a) (sizeof(a) / sizeof(a[0]))
+
+void printDateTime(const RtcDateTime& dt)
+{
+  String datetime = date2string(dt);
+  lcd.clear();
+  lcd.setCursor(1,1);
+  lcd.print(datetime);
+
+    Serial.print(datetime);
+    
 }
