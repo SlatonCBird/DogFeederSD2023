@@ -14,6 +14,10 @@
  #include <ThreeWire.h> // software SPI for RTC
  #include <RtcDS1302.h> // for RTC
  #include <TMRpcm.h> // .wav library
+ #include <PN532_I2C.h> //RFID I2C
+ #include <PN532.h> //RFID
+ #include <NfcAdapter.h> //RFID Read Data
+
  // end library Inclusions =======================================================================================================
  
  // I/O pin Designations =========================================================================================================
@@ -56,15 +60,22 @@
 // end constants============================================================================================================================
 
  const int chipSelect = 53;
+ const int motorpin2=28;
+ const int motorpin1=29;
  volatile boolean userInterface = false;
  volatile boolean allowSimultaneousFeeding;
  volatile boolean recentBowlMove = false;
+ String tagId1 = "FA 5F 99 1A";
+ String tagId2= "39 0B B6 B0"; // with constants
+ String tagId = "None";
+ byte nuidPICC[4]; //Not sure where this goes
 
  // set up variables using the SD utility library functions:
  Sd2Card card;
  SdVolume volume;
  SdFile root;
- 
+ PN532_I2C pn532_i2c(Wire);
+ NfcAdapter nfc = NfcAdapter(pn532_i2c);
 
  Servo SLS; // instantiate SLS servo motor
  HX711 leftScale; // Left Load Cell ADC
@@ -89,7 +100,63 @@ byte ARROW[8] = {
 
 
  //functions ######################################################################################################################
- int open_left(){
+void RFID() {
+  readNFC();
+  if(tagId==tagId2)
+  {
+    Serial.println("Dog 2 Present");
+    if(digitalRead(motorpin2) == 1)
+    {
+      digitalWrite(motorpin2, LOW);
+      tagId = "";
+      delay(1000);
+    }
+
+     else if(digitalRead(motorpin2) ==  0)
+    {
+      digitalWrite(motorpin2, HIGH);
+      tagId = "";
+      delay(1000);
+    }
+
+      if(digitalRead(motorpin1) == 1)
+    {
+      digitalWrite(motorpin1, LOW);
+      tagId = "";
+      delay(1000);
+    }
+    return 1;
+  }
+
+  if(tagId==tagId1)
+  {
+    Serial.println("Dog 1 Present");
+    if( digitalRead(motorpin1) == 1)
+    {
+      digitalWrite(motorpin1, LOW);
+      tagId = "";
+      delay(1000);
+    }
+
+    else if(digitalRead(motorpin1) ==  0)
+    {
+      digitalWrite(motorpin1, HIGH);
+      tagId = "";
+      delay(1000);
+
+    if( digitalRead(motorpin2) == 1)
+    {
+      digitalWrite(motorpin2, LOW);
+      tagId = "";
+      delay(1000);
+    } 
+    return 1;
+    }
+  }
+} 
+
+
+int open_left(){
   if(!recentBowlMove){
     analogWrite(MOTOR_LEFT_OPEN, speed);
     delay(2000);
@@ -316,7 +383,12 @@ byte ARROW[8] = {
 
 void setup() {
   Serial.begin(9600);
+  nfc.begin();
   pinMode(13, OUTPUT);
+  pinMode(motorpin1,OUTPUT); // RFID
+  pinMode(motorpin2,OUTPUT);
+  digitalWrite(motorpin1, LOW);
+  digitalWrite(motorpin2, LOW); // RFID
 
   pinMode(menu, INPUT_PULLUP);
   attachInterrupt(1, ISR_UI, LOW);
@@ -324,7 +396,7 @@ void setup() {
   pinMode(down, INPUT_PULLUP);
   pinMode(back, INPUT_PULLUP);
   pinMode(enter, INPUT_PULLUP);
-
+  
   pinMode(36, OUTPUT);
   pinMode(38, OUTPUT);
   pinMode(MOTOR_LEFT_OPEN, OUTPUT);
@@ -336,7 +408,8 @@ void setup() {
   digitalWrite(MOTOR_LEFT_CLOSE, LOW);
   digitalWrite(MOTOR_RIGHT_OPEN, LOW);
 
-  leftScale.begin(SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
+  leftScale.
+   (SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
   leftScale.set_scale();
   leftScale.tare();
 
@@ -566,4 +639,22 @@ void printDateTime(const RtcDateTime& dt)
 
     Serial.print(datetime);
     
+}
+
+void readNFC() {
+  if (nfc.tagPresent())
+  {
+    NfcTag tag = nfc.read();
+    tag.print();
+    tagId = tag.getUidString();
+    Serial.println("Tag ID:");
+    Serial.println(tagId);
+  }
+
+  else
+  {
+    return 1;
+  }
+
+  delay(1000);
 }
