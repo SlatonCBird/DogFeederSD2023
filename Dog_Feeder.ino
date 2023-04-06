@@ -1,8 +1,9 @@
 
 /**
  * Prototype software for Automated Multi-Dog Feeder
- * 
+ * Version 0.5
  */
+ 
  // Library Inclusions ===========================================================================================================
  #include <Servo.h> // Arduino Servo motor library
  #include "Wire.h" // For I2C
@@ -14,9 +15,10 @@
  #include <ThreeWire.h> // software SPI for RTC
  #include <RtcDS1302.h> // for RTC
  #include <TMRpcm.h> // .wav library
- #include <PN532_I2C.h> //RFID I2C
- #include <PN532.h> //RFID
- #include <NfcAdapter.h> //RFID Read Data
+ #include "PN532_I2C.h" //RFID I2C
+ #include "PN532.h" //RFID
+ #include "NfcAdapter.h" //RFID Read Data
+ #include <EEPROM.h> // Arduino standard EEPROM library
 
  // end library Inclusions =======================================================================================================
  
@@ -43,7 +45,12 @@
  #define MOTOR_LEFT_CLOSE 11
  #define MOTOR_RIGHT_OPEN 12
  #define MOTOR_RIGHT_CLOSE 13
- #define speed 255
+
+ #define RIGHT_CLOSED
+ #define RIGHT_OPEND
+ #define LEFT_CLOSED
+ #define LEFT_OPEND
+ 
 
  // end I/O pins =================================================================================================================
  
@@ -69,6 +76,22 @@
  String tagId2= "39 0B B6 B0"; // with constants
  String tagId = "None";
  byte nuidPICC[4]; //Not sure where this goes
+
+//Structs===============================================================================================================================
+
+  typedef struct feeding{
+    
+    uint8_t quartercups; // byte expecting values 1-16 correspondint to the number of quarter cups
+    uint8_t hour; 
+    uint8_t minutes;
+    String noise;
+  };
+  feeding leftMorning; // left dog morning feeding schedule to be kept at EEPROM Add. 8
+  feeding leftEvening; // left dog evening feeding schedule to be kept at EEPROM Add. 16
+  feeding rightMorning; // right dog morning feeding schedule to be kept at EEPROM Add. 24
+  feeding rightEvening; // right dog evening feeding schedule to be kept at EEPROM Add. 32
+
+  
 
  // set up variables using the SD utility library functions:
  Sd2Card card;
@@ -158,9 +181,9 @@ void RFID() {
 
 int open_left(){
   if(!recentBowlMove){
-    analogWrite(MOTOR_LEFT_OPEN, speed);
+    digitalWrite(MOTOR_LEFT_OPEN, HIGH);
     delay(2000);
-    analogWrite(MOTOR_LEFT_OPEN, 0);
+    digitalWrite(MOTOR_LEFT_OPEN, LOW);
     
   }
   bowlMoved();
@@ -168,9 +191,9 @@ int open_left(){
  }
  int open_right(){
   if(!recentBowlMove){
-    analogWrite(MOTOR_RIGHT_OPEN, speed);
+    digitalWrite(MOTOR_RIGHT_OPEN, HIGH);
     delay(2000);
-    analogWrite(MOTOR_RIGHT_OPEN, 0);
+    digitalWrite(MOTOR_RIGHT_OPEN, LOW);
     
   }
   bowlMoved();
@@ -178,9 +201,9 @@ int open_left(){
  }
  int close_left(){
   if(!recentBowlMove){
-    analogWrite(MOTOR_LEFT_CLOSE, speed);
+    digitalWrite(MOTOR_LEFT_CLOSE, HIGH);
     delay(2000);
-    analogWrite(MOTOR_LEFT_CLOSE, 0);
+    digitalWrite(MOTOR_LEFT_CLOSE, LOW);
     
   }
   bowlMoved();
@@ -188,9 +211,9 @@ int open_left(){
  }
  int close_right(){
   if(!recentBowlMove){
-    analogWrite(MOTOR_RIGHT_CLOSE, speed);
+    digitalWrite(MOTOR_RIGHT_CLOSE, HIGH);
     delay(1000);
-    analogWrite(MOTOR_RIGHT_CLOSE, 0);
+    digitalWrite(MOTOR_RIGHT_CLOSE, LOW);
     
   }
   bowlMoved();
@@ -383,12 +406,12 @@ int open_left(){
 
 void setup() {
   Serial.begin(9600);
-  nfc.begin();
+//  nfc.begin();
   pinMode(13, OUTPUT);
-  pinMode(motorpin1,OUTPUT); // RFID
-  pinMode(motorpin2,OUTPUT);
-  digitalWrite(motorpin1, LOW);
-  digitalWrite(motorpin2, LOW); // RFID
+//  pinMode(motorpin1,OUTPUT); // RFID
+//  pinMode(motorpin2,OUTPUT);
+//  digitalWrite(motorpin1, LOW);
+//  digitalWrite(motorpin2, LOW); // RFID
 
   pinMode(menu, INPUT_PULLUP);
   attachInterrupt(1, ISR_UI, LOW);
@@ -408,8 +431,7 @@ void setup() {
   digitalWrite(MOTOR_LEFT_CLOSE, LOW);
   digitalWrite(MOTOR_RIGHT_OPEN, LOW);
 
-  leftScale.
-   (SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
+  leftScale.begin(SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
   leftScale.set_scale();
   leftScale.tare();
 
@@ -549,8 +571,20 @@ void setup() {
   // list all files in the card with date and size
   root.ls(LS_R | LS_DATE | LS_SIZE);
 
-  RtcDateTime CurrentTime = RtcDateTime(__DATE__,__TIME__);
-  Clock.SetDateTime(CurrentTime);
+//  RtcDateTime CurrentTime = RtcDateTime(__DATE__,__TIME__);
+//  Clock.SetDateTime(CurrentTime);
+
+// print the contents of EEPROM  to serial output
+  Serial.println(" contents of EEProm");
+
+  for(int addr = 0; addr < 4096; addr=addr+8){
+    Serial.print(addr);
+    for(int a=0; a<8; a++){
+      Serial.print("\t");
+      Serial.print(EEPROM.read(addr + a));
+    }
+   Serial.println();
+  }
 
 
 } // End of Setup******************************************************************************************************************
@@ -568,6 +602,11 @@ void loop() {
   lcd.clear();
   lcd.print(timestamp);
   printDateTime(now);
+//  delayMicroseconds(50000000000000);
+  delay(5000);
+
+
+  
   //speak.play("a.wav");
 //  open_left();
 //  delay(5000);
@@ -591,14 +630,14 @@ void loop() {
 //
 //
   //SLS test operations
-  SLS.write(-50);
-  delay(5000);
-  SLS.write(360);
-  delay(5000);
-  SLS_Left(10);
-  delay(5000);
-  SLS_Right(10);
-  delay(5000);
+//  SLS.write(-50);
+//  delay(5000);
+//  SLS.write(360);
+//  delay(5000);
+//  SLS_Left(10);
+//  delay(5000);
+//  SLS_Right(10);
+//  delay(5000);
   
 
    // Test code in loop below here *************************************************************************************************
@@ -610,6 +649,7 @@ void loop() {
 }
 
 // more functions
+
 
 
 String date2string(const RtcDateTime& dateTime){
