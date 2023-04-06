@@ -46,10 +46,10 @@
  #define MOTOR_RIGHT_OPEN 12
  #define MOTOR_RIGHT_CLOSE 13
 
- #define RIGHT_CLOSED
- #define RIGHT_OPEND
- #define LEFT_CLOSED
- #define LEFT_OPEND
+ #define RIGHT_CLOSED 37 // red
+ #define RIGHT_OPEND 39 //yellow
+ #define LEFT_CLOSED 41 // white
+ #define LEFT_OPEND 35 // green
  
 
  // end I/O pins =================================================================================================================
