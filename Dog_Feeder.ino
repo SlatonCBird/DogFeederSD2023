@@ -41,10 +41,10 @@
 
  #define SOUND 46
 
- #define MOTOR_LEFT_OPEN 10
- #define MOTOR_LEFT_CLOSE 11
- #define MOTOR_RIGHT_OPEN 12
- #define MOTOR_RIGHT_CLOSE 13
+ #define MOTOR_LEFT_OPEN 31 //green
+ #define MOTOR_LEFT_CLOSE 29 // yellow
+ #define MOTOR_RIGHT_OPEN 30 // purple
+ #define MOTOR_RIGHT_CLOSE 28 // blue
 
  #define RIGHT_CLOSED 37 // red
  #define RIGHT_OPEND 39 //yellow
@@ -76,6 +76,8 @@
  String tagId2= "39 0B B6 B0"; // with constants
  String tagId = "None";
  byte nuidPICC[4]; //Not sure where this goes
+
+ volatile int worthless;
 
 //Structs===============================================================================================================================
 
@@ -182,9 +184,9 @@ void RFID() {
 int open_left(){
   if(!recentBowlMove){
     digitalWrite(MOTOR_LEFT_OPEN, HIGH);
-    delay(2000);
+    while (digitalRead(LEFT_OPEND) != LOW){
+    }
     digitalWrite(MOTOR_LEFT_OPEN, LOW);
-    
   }
   bowlMoved();
   return 1;
@@ -192,9 +194,9 @@ int open_left(){
  int open_right(){
   if(!recentBowlMove){
     digitalWrite(MOTOR_RIGHT_OPEN, HIGH);
-    delay(2000);
+    while (digitalRead(RIGHT_OPEND) != LOW){
+    }
     digitalWrite(MOTOR_RIGHT_OPEN, LOW);
-    
   }
   bowlMoved();
   return 1;
@@ -202,9 +204,9 @@ int open_left(){
  int close_left(){
   if(!recentBowlMove){
     digitalWrite(MOTOR_LEFT_CLOSE, HIGH);
-    delay(2000);
+    while(digitalRead(LEFT_CLOSED) != LOW){
+    }
     digitalWrite(MOTOR_LEFT_CLOSE, LOW);
-    
   }
   bowlMoved();
   return 1;
@@ -212,9 +214,9 @@ int open_left(){
  int close_right(){
   if(!recentBowlMove){
     digitalWrite(MOTOR_RIGHT_CLOSE, HIGH);
-    delay(1000);
+    while(digitalRead(RIGHT_CLOSED) != LOW){
+    }
     digitalWrite(MOTOR_RIGHT_CLOSE, LOW);
-    
   }
   bowlMoved();
   return 1;
@@ -419,6 +421,11 @@ void setup() {
   pinMode(down, INPUT_PULLUP);
   pinMode(back, INPUT_PULLUP);
   pinMode(enter, INPUT_PULLUP);
+
+  pinMode(RIGHT_CLOSED, INPUT_PULLUP);
+  pinMode(RIGHT_OPEND, INPUT_PULLUP);
+  pinMode(LEFT_CLOSED, INPUT_PULLUP);
+  pinMode(LEFT_OPEND, INPUT_PULLUP);
   
   pinMode(36, OUTPUT);
   pinMode(38, OUTPUT);
@@ -430,6 +437,11 @@ void setup() {
   digitalWrite(MOTOR_RIGHT_CLOSE, LOW);
   digitalWrite(MOTOR_LEFT_CLOSE, LOW);
   digitalWrite(MOTOR_RIGHT_OPEN, LOW);
+
+ #define RIGHT_CLOSED 37 // red
+ #define RIGHT_OPEND 39 //yellow
+ #define LEFT_CLOSED 41 // white
+ #define LEFT_OPEND 35 // green
 
   leftScale.begin(SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
   leftScale.set_scale();
@@ -571,8 +583,8 @@ void setup() {
   // list all files in the card with date and size
   root.ls(LS_R | LS_DATE | LS_SIZE);
 
-//  RtcDateTime CurrentTime = RtcDateTime(__DATE__,__TIME__);
-//  Clock.SetDateTime(CurrentTime);
+  RtcDateTime CurrentTime = RtcDateTime(__DATE__,__TIME__);
+  Clock.SetDateTime(CurrentTime);
 
 // print the contents of EEPROM  to serial output
   Serial.println(" contents of EEProm");
@@ -586,24 +598,34 @@ void setup() {
    Serial.println();
   }
 
-
 } // End of Setup******************************************************************************************************************
 
 void loop() {
   if(userInterface){
     UI();
   }
-
-
-
+  
+  digitalWrite(47, LOW);
+  digitalWrite(47, HIGH);
   RtcDateTime now = Clock.GetDateTime();
   String timestamp = date2string(now);
-  Serial.println(timestamp);
+  //Serial.println(timestamp);
   lcd.clear();
   lcd.print(timestamp);
-  printDateTime(now);
-//  delayMicroseconds(50000000000000);
-  delay(5000);
+  //printDateTime(now);
+//  Serial.println("opening");
+//  worthless = open_left();
+//  delay(5000);
+//  Serial.println("opening");
+//  worthless = open_right();
+//  delay(5000);
+//  Serial.println("closing");
+//  worthless = close_left();
+//  Serial.println("closing");
+//  worthless = close_right();
+//  delay(5000);
+//  SLS_Right(5);
+//  SLS_Left(5);
 
 
   
@@ -619,15 +641,10 @@ void loop() {
 //  UpdateClock();
 //  Checkfordog();
 //  Checkforfeeding();
+  Serial.println(rightScale.get_units());
+  // Serial.println(leftScale.get_units());
+  delay(10);
   
-
-
-
-
-//  Serial.println(rightScale.get_units());
-//  Serial.println(leftScale.get_units());
-//  delay(10);
-//
 //
   //SLS test operations
 //  SLS.write(-50);
@@ -677,7 +694,7 @@ void printDateTime(const RtcDateTime& dt)
   lcd.setCursor(1,1);
   lcd.print(datetime);
 
-    Serial.print(datetime);
+    Serial.println(datetime);
     
 }
 
