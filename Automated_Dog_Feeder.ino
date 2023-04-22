@@ -1,22 +1,25 @@
+#include <LowPower.h>
+
 /**
    Prototype software for Automated Multi-Dog Feeder
    Version 0.5
 */
 // Library Inclusions ===========================================================================================================
 #include <Servo.h> // Arduino Servo motor library
-#include "Wire.h" // For I2C
-#include "LCD.h" // For LCD
-#include "LiquidCrystal_I2C.h" // for I2C LCD backpack
 #include <SPI.h> // for SD card
 #include <SD.h> // for SD card
 #include <HX711.h> // for load cell ADC
 #include <ThreeWire.h> // software SPI for RTC
 #include <RtcDS1302.h> // for RTC
-#include <TMRpcm.h>   // .wav library
+#include <TMRpcm.h>   // .wav audio library
+#include <EEPROM.h> // Arduino standard EEPROM library
+#include <LowPower.h> //
+#include "Wire.h" // For I2C
+#include "LCD.h" // For LCD
+#include "LiquidCrystal_I2C.h" // for I2C LCD backpack
 #include "PN532_I2C.h" //RFID I2C
 #include "PN532.h" //RFID
 #include "NfcAdapter.h" //RFID Read Data
-#include <EEPROM.h> // Arduino standard EEPROM library
 // end library Inclusions =======================================================================================================
 
 // I/O pin Designations =========================================================================================================
@@ -33,27 +36,25 @@
 #define SCALE_RIGHT_DOUT 22 //right load cell data
 #define SCALE_RIGHT_SCK 24 //right load cell clock
 
-#define RTC_CLK 47
-#define RTC_DAT 48
-#define RTC_RST 49
+#define RTC_CLK 47 // RTC I2C clock line
+#define RTC_DAT 48 // RTC I2C data line
+#define RTC_RST 49 // RTC Reset/chipSelect line
 
 #define SOUND 46 // Audio output
 
-#define MOTOR_LEFT_OPEN 31 //green
+#define MOTOR_LEFT_OPEN 31 // Left Motor H-Bridge input green
 #define MOTOR_LEFT_CLOSE 29 // yellow
 #define MOTOR_RIGHT_OPEN 30 // purple
-#define MOTOR_RIGHT_CLOSE 28 // blue
+#define MOTOR_RIGHT_CLOSE 28 // Right Motor H-Bridge input blue
 
-#define RIGHT_CLOSED 37 // red
-#define RIGHT_OPEND 39 //yellow
-#define LEFT_CLOSED 41 // white
-#define LEFT_OPEND 35 // green
+#define RIGHT_CLOSED 37 // Right platform "closed" limit switch red
+#define RIGHT_OPEND 39 // Right platform "opened" limit switch yellow
+#define LEFT_CLOSED 41 // Left platform "closed" limit switch white
+#define LEFT_OPEND 35 // Left platform "opened" limit switch green
 
-#define UI_DELAY 300000
-
+#define UI_DELAY 300000 // UI button debounce delay
 
 // end I/O pins =================================================================================================================
-
 
 // Constants ====================================================================================================================
 #define SLS_idle_position 80 // Idle position for SLS storage(degrees)
@@ -64,7 +65,7 @@
 #define SLS_fill_delay 2000 // delay for SLS to fill from hopper(mS)
 #define SLS_dump_delay 2000 // delay for SLS to dump into bowl(mS)
 #define buttondelay 500 // delay for button debounce(mS)
-// end constants============================================================================================================================
+
 
 const int chipSelect = 53;
 volatile boolean userInterface = false;
@@ -74,7 +75,7 @@ String tagId1 = "EC E7 19 49";
 String tagId2 = "50 19 8F 1E"; // with constants
 String tagId = "None";
 byte nuidPICC[4]; //Not sure where this goes
-
+// end constants============================================================================================================================
 
 //Structs===============================================================================================================================
 
@@ -101,6 +102,13 @@ feeding leftMorning; // left dog morning feeding schedule to be kept at EEPROM A
 feeding leftEvening; // left dog evening feeding schedule to be kept at EEPROM Add. 1000
 feeding rightMorning; // right dog morning feeding schedule to be kept at EEPROM Add. 2000
 feeding rightEvening; // right dog evening feeding schedule to be kept at EEPROM Add. 3000
+//struct feeding feedingPlan[4] = [leftMorning, leftEvening, rightMorning, rightEvening];
+int32_t leftEmpty; // weight value of empty bowl left at EEPROM Add. 4008
+int32_t rightEmpty; // weight value of empty bowl right at EEPROM Add. 4016
+int32_t leftDensity; // integer weight per quarter cup at EEPROM Add. 4024
+int32_t rightDensity; // integer weight per quarter cup at EEPROM Add. 4032
+int32_t leftCount; // number of averaged measurements for left density at EEPROM Add. 4040
+int32_t rightCount; // number of averaged measurements for left density at EEPROM Add. 4048
 
 // instantiation of objects
 PN532_I2C pn532_i2c(Wire);
@@ -135,6 +143,15 @@ byte ARROW[8] = {
 void updateTime() {
   RtcDateTime now = Clock.GetDateTime();
   printDateTime(now);
+  if(checkForFeeding(leftMorning, now)) feedingCycle(leftMorning);
+  if(checkForFeeding(leftEvening, now)) feedingCycle(leftEvening);
+  if(checkForFeeding(rightMorning, now)) feedingCycle(rightMorning);
+  if(checkForFeeding(rightEvening, now)) feedingCycle(rightEvening);
+}
+
+boolean checkForFeeding(feeding plan, RtcDateTime currentTime){
+  if ((plan.hour == currentTime.Hour()) && (plan.mins == currentTime.Minute())) return true;
+  else return false;
 }
 
 
@@ -147,6 +164,12 @@ void updateEEPROM() {
   EEPROM.put(1000, leftEvening);
   EEPROM.put(2000, rightMorning);
   EEPROM.put(3000, rightEvening);
+  EEPROM.put(4008, leftEmpty);
+  EEPROM.put(4016, rightEmpty);
+  EEPROM.put(4024, leftDensity);
+  EEPROM.put(4032, rightDensity);
+  EEPROM.put(4040, leftCount);
+  EEPROM.put(4048, rightCount);
 }
 
 void updateRAM() {
@@ -154,7 +177,56 @@ void updateRAM() {
   EEPROM.get(1000, leftEvening);
   EEPROM.get(2000, rightMorning);
   EEPROM.get(3000, rightEvening);
+  EEPROM.get(4008, leftEmpty);
+  EEPROM.get(4016, rightEmpty);
+  EEPROM.get(4024, leftDensity);
+  EEPROM.get(4032, rightDensity);
+  EEPROM.get(4040, leftCount);
+  EEPROM.get(4048, rightCount);
   allowSimultaneousFeeding = EEPROM.read(4000);
+
+}
+
+void feedingCycle(feeding plan) {
+  //close_left(); close_right(); // ensure both platforms are closed
+  Serial.println("instantiating");
+  uint8_t amt; // amount planned to be dispensed by SLS
+  uint32_t maxWeight; // sensor reading at full bowl
+  uint32_t currentWeight; // stores fresh reading from weight sensor
+  uint8_t ullage; // number of quartercups
+  uint8_t remaining; // number of quartercups remaining
+  Serial.println("calculating");
+  if (plan.isLeftDog) {
+    maxWeight = abs(leftEmpty) + (32 * abs(leftDensity)); // weight of empty bowl + 8 cups in bowl
+    Serial.println(maxWeight);
+    currentWeight = abs(leftScale.read_average(10)); // weigh bowl
+    Serial.println(currentWeight);
+    ullage = (maxWeight - currentWeight) / leftDensity; //calculate number of quartercups to fill bowl
+    Serial.println(ullage);
+    remaining = (currentWeight - leftEmpty) / leftDensity; // calculate remaining amount
+    Serial.println(remaining);
+  }
+  else {
+    maxWeight = abs(rightEmpty) + (32 * abs(rightDensity)); // weight of empty bowl + 8 cups in bowl
+    currentWeight = abs(rightScale.read_average(10)); // weigh bowl
+    ullage = (maxWeight - currentWeight) / rightDensity; //calculate number of quartercups to fill bowl
+    remaining = (currentWeight - rightEmpty) / rightDensity; // calculate remaining amount
+  }
+  Serial.println("checking for zero");
+  if (currentWeight >= maxWeight) amt = 0; // if bowl is full do not add food
+  else switch (plan.choice) {
+      case 0/* always */: amt = min(plan.quartercups, ullage); break; // amount is the lesser of
+      case 1/* fill */: amt = min((plan.quartercups - remaining), ullage); break; // should never be ullage
+      case 2/* wait */: if (remaining > 1) amt = 0; // detect if food remains with 1/4 cup safety factor
+        else amt = plan.quartercups;
+        break;
+    }
+  Serial.println("dispensing");
+  if (amt > 0) {
+    if (plan.isLeftDog) SLS_Left(amt);
+    else SLS_Right(amt);
+  }
+  speak.play(plan.noise);
 }
 
 fakeDateTime Real2FakeDate(RtcDateTime& realDateTime) {
@@ -233,6 +305,7 @@ int close_right() {
   if (!recentBowlMove) {
     digitalWrite(MOTOR_RIGHT_CLOSE, HIGH);
     while (digitalRead(RIGHT_CLOSED) != LOW) {
+      Serial.println("still closing");
     }
     digitalWrite(MOTOR_RIGHT_CLOSE, LOW);
   }
@@ -255,27 +328,47 @@ void SLS_Idle() {
 
 void SLS_Left(int quarterCups) {
   //fills left bowl with "quarterCups" of left food
+  uint32_t before;
+  uint32_t after;
+  uint32_t cumulative= 0;
+  uint32_t newvalue;
   for (int i = 0; i < quarterCups; i++) {
+    before = abs(leftScale.read_average(10));
     SLS.write(SLS_left_fill);
     delay(SLS_fill_delay);
     SLS.write(SLS_left_dump);
     delay(SLS_dump_delay);
+    after = abs(leftScale.read_average(10));
+    cumulative = cumulative + (after - before);
     Serial.print("dump #");
     Serial.println(i);
   }
+  newvalue = cumulative / quarterCups; // calculate average density of one quartercup this feeding
+  leftDensity = ((leftDensity * leftCount) + newvalue) / ++leftCount; // rolling average and increment count
+  updateEEPROM(); // write new density to eeprom
   SLS_Idle();
 }
 
 void SLS_Right(int quarterCups) {
   // fills right bowl with "quarterCups" of right food
+    uint32_t before;
+  uint32_t after;
+  uint32_t cumulative= 0;
+  uint32_t newvalue;
   for (int i = 0; i < quarterCups; i++) {
+    before = abs(rightScale.read_average(10));
     SLS.write(SLS_right_fill);
     delay(SLS_fill_delay);
     SLS.write(SLS_right_dump);
     delay(SLS_dump_delay);
+    after = abs(rightScale.read_average(10));
+    cumulative = cumulative + (after - before);
     Serial.print("dump #");
     Serial.println(i);
   }
+  newvalue = cumulative / quarterCups; // calculate average density of one quartercup this feeding
+  rightDensity = ((rightDensity * rightCount) + newvalue) / ++rightCount; // rolling average and increment count
+  updateEEPROM(); // write new density to eeprom
   SLS_Idle();
 }
 
@@ -873,13 +966,26 @@ void setup() {
   digitalWrite(MOTOR_LEFT_CLOSE, LOW);
   digitalWrite(MOTOR_RIGHT_OPEN, LOW);
 
-  leftScale.begin(SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
-  leftScale.set_scale();
-  leftScale.tare();
-
-  rightScale.begin(SCALE_RIGHT_DOUT, SCALE_RIGHT_SCK);
-  rightScale.set_scale();
-  rightScale.tare();
+  //  updateRAM();
+  //
+  //  leftScale.begin(SCALE_LEFT_DOUT, SCALE_LEFT_SCK);
+  //  leftScale.set_scale();
+  //  //leftScale.tare();
+  //  leftEmpty = abs(leftEmpty);
+  //  leftDensity = abs(leftScale.read_average(10)) - leftEmpty;
+  //  Serial.println(leftDensity);
+  //  leftCount = 1;
+  //
+  //
+  //  rightScale.begin(SCALE_RIGHT_DOUT, SCALE_RIGHT_SCK);
+  //  rightScale.set_scale();
+  //  //rightScale.tare();
+  //  rightEmpty = abs(rightEmpty);
+  //  rightDensity = abs(rightScale.read_average(10)) - rightEmpty;
+  //  Serial.println(rightDensity);
+  //  rightCount = 1;
+  //
+  //  updateEEPROM();
 
   // activate SLS
   SLS.attach(SLScontrol);
@@ -933,44 +1039,38 @@ void setup() {
   //  Clock.SetDateTime(CurrentTime);
 
   // print the contents of EEPROM  to serial output
-  Serial.println(" contents of EEProm");
-
-  for (int addr = 0; addr < 4096; addr = addr + 8) {
-    Serial.print(addr);
-    for (int a = 0; a < 8; a++) {
-      Serial.print("\t");
-      Serial.print(EEPROM.read(addr + a));
-    }
-    Serial.println();
-  }
+  //  Serial.println(" contents of EEProm");
+  //
+  //  for (int addr = 0; addr < 4096; addr = addr + 8) {
+  //    Serial.print(addr);
+  //    for (int a = 0; a < 8; a++) {
+  //      Serial.print("\t");
+  //      Serial.print(EEPROM.read(addr + a));
+  //    }
+  //    Serial.println();
+  //  }
 
 } // End of Setup******************************************************************************************************************
 
 void loop() {
+  LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
   if (userInterface) UI();
+  updateRAM();
   updateTime();
   RFID();
   if (!speak.isPlaying()) digitalWrite(SOUND, LOW);
+  
 
-
-
-
-  //  Serial.println("playing");
-  //  speak.play("test2.wav");
-  //  while (speak.isPlaying()) {
-  //    RFID();
-  //  }
-  //  if (!speak.isPlaying()) {
-  //    digitalWrite(SOUND, LOW);
-  //  }
-  delay(2000);
-  //RFID();
-
-
-  //  RFID();
+  //  SLS_Left(2);
   //  delay(2000);
-
-  //speak.play("a.wav");
-
-  // Test code in loop below here *************************************************************************************************
+  //  SLS_Right(2);
+  //  delay(2000);
+//  Serial.println("leftMorning");
+//  feedingCycle(leftMorning); delay(2000);
+//  Serial.println("leftEvening");
+//  feedingCycle(leftEvening); delay(2000);
+//  Serial.println("rightMorning");
+//  feedingCycle(rightMorning); delay(2000);
+//  Serial.println("rightEvening");
+//  feedingCycle(rightEvening); delay(2000);
 }
